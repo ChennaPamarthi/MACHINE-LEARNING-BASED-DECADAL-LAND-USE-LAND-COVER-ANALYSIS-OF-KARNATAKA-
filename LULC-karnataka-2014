@@ -1,0 +1,244 @@
+Map.addLayer(table);
+var dataset = ee.ImageCollection("LANDSAT/LC08/C02/T1")
+  .filterBounds(table)
+  .filterMetadata('CLOUD_COVER_LAND', 'less_than', 1)
+  .filterDate('2014-01-01', '2014-12-31')
+  .median()
+  .clip(table);
+print(dataset)
+// Visualization parameters
+ 
+// Area of Interest (ROI)
+Map.centerObject(table, 8);
+Map.addLayer(dataset,imageVisParam,"LANDSAT7")
+
+// Merge training regions for classification
+var c = water.merge(crop).merge(builtupurban).merge(fallow).merge(barren).merge(forest).merge(builtuprural).merge(coastalland);
+
+// Sample regions from the dataset for classification
+var training = dataset.sampleRegions({
+  collection: c,
+  properties: ['class'],
+  scale: 30
+});
+
+// Train an SVM classifier
+var classifier = ee.Classifier.libsvm().train({
+  features: training,
+  classProperty: 'class', // This matches the 'class' property in your training data
+  inputProperties: ['B5', 'B4', 'B3', 'B2']
+});
+
+// Classify the dataset using the trained classifier
+var classified = dataset.select(['B5', 'B4', 'B3', 'B2']).classify(classifier);
+
+// Visualization parameters for classification
+var visParams = {min: 1, max: 8, palette: ['#0000FF', '#FF0000', '#FFFF00', '#FFFF99','#996633','#008000','#FF9999','#99CCFF']};
+Map.addLayer(classified, visParams, 'svm');                       //////////////////////////////////
+// Split the dataset for training and testing (80/20 split)
+var withRandom = training.randomColumn('random');
+var split = 0.8;
+var trainingPartition = withRandom.filter(ee.Filter.lt('random', split));
+var testingPartition = withRandom.filter(ee.Filter.gte('random', split));
+
+
+
+
+// Get a confusion matrix for resubstitution accuracy
+var trainAccuracy = classifier.confusionMatrix();
+print('Confusion matrix: ', trainAccuracy);
+print('Training overall accuracy: ', trainAccuracy.accuracy());
+print('Kappa accuracy: ', trainAccuracy.kappa());
+print('Producers accuracy: ', trainAccuracy.producersAccuracy());
+print('Consumers accuracy: ', trainAccuracy.consumersAccuracy());
+
+
+//random forest
+var classifierRF = ee.Classifier.smileRandomForest(50).train({
+  features: training,
+  classProperty: 'class', // This matches the 'class' property in your training data
+  inputProperties: ['B5', 'B4', 'B3', 'B2']
+});
+
+// Classify the dataset using the trained Random Forest classifier
+var classifiedRF = dataset.select(['B5', 'B4', 'B3', 'B2']).classify(classifierRF);
+
+// Visualization parameters for classification
+var visParams = {min: 1, max: 8, palette: ['#0000FF', '#FF0000', '#FFFF00', '#FFFF99','#996633','#008000','#FF9999','#99CCFF']};
+Map.addLayer(classifiedRF, visParams, 'Random Forest Classified Image');
+
+// Split the dataset for training and testing (80/20 split)
+var withRandom = training.randomColumn('random');
+var split = 0.8;
+var trainingPartition = withRandom.filter(ee.Filter.lt('random', split));
+var testingPartition = withRandom.filter(ee.Filter.gte('random', split));
+
+
+var trainAccuracy = classifierRF.confusionMatrix();
+print('Confusion matrix: ', trainAccuracy);
+print('Training overall accuracy: ', trainAccuracy.accuracy());
+print('Kappa accuracy: ', trainAccuracy.kappa());
+print('Producers accuracy: ', trainAccuracy.producersAccuracy());
+print('Consumers accuracy: ', trainAccuracy.consumersAccuracy());
+
+
+// 1. Import your image collection (you should already have this dataset)
+// Assuming your dataset is already processed as `dataset` (your pre-processed image)
+
+// Example of training the classifier (Random Forest)
+var classifierRF = ee.Classifier.smileRandomForest(50).train({
+  features: training,
+  classProperty: 'class', // This matches the 'class' property in your training data
+  inputProperties: ['B5', 'B4', 'B3', 'B2']
+});
+
+// 2. Classify the image using Random Forest classifier
+var classifiedRF = dataset.select(['B5', 'B4', 'B3', 'B2']).classify(classifierRF);
+
+// ---- AREA CALCULATION FOR RANDOM FOREST CLASSIFICATION ----
+
+// 1. Create class masks for RF classification
+var waterMaskRF = classifiedRF.eq(1);
+var vegetationMaskRF = classifiedRF.eq(2);
+var builtupUrbanMaskRF = classifiedRF.eq(3);
+var fallowMaskRF = classifiedRF.eq(4);
+var barrenMaskRF = classifiedRF.eq(5);
+var forestMaskRF = classifiedRF.eq(6);
+var builtupRuralMaskRF = classifiedRF.eq(7);
+var coastalLandMaskRF = classifiedRF.eq(8);
+
+// 2. Calculate area in km²
+var pixelArea = ee.Image.pixelArea().divide(1e6);  // Convert m² to km²
+
+var waterAreaRF = pixelArea.updateMask(waterMaskRF);
+var vegetationAreaRF = pixelArea.updateMask(vegetationMaskRF);
+var builtupUrbanAreaRF = pixelArea.updateMask(builtupUrbanMaskRF);
+var fallowAreaRF = pixelArea.updateMask(fallowMaskRF);
+var barrenAreaRF = pixelArea.updateMask(barrenMaskRF);
+var forestAreaRF = pixelArea.updateMask(forestMaskRF);
+var builtupRuralAreaRF = pixelArea.updateMask(builtupRuralMaskRF);
+var coastalLandAreaRF = pixelArea.updateMask(coastalLandMaskRF);
+
+// 3. Function to compute total area for each class
+function getArea(image) {
+  return ee.Number(image.reduceRegion({
+    reducer: ee.Reducer.sum(),
+    geometry: table,
+    scale: 30,
+    maxPixels: 1e9
+  }).values().get(0));
+}
+
+// 4. Calculate area values for RF
+var waterSumRF = getArea(waterAreaRF);
+var vegetationSumRF = getArea(vegetationAreaRF);
+var builtupUrbanSumRF = getArea(builtupUrbanAreaRF);
+var fallowSumRF = getArea(fallowAreaRF);
+var barrenSumRF = getArea(barrenAreaRF);
+var forestSumRF = getArea(forestAreaRF);
+var builtupRuralSumRF = getArea(builtupRuralAreaRF);
+var coastalLandSumRF = getArea(coastalLandAreaRF);
+
+// 5. Create a FeatureCollection to store RF area values
+var areaFeaturesRF = ee.FeatureCollection([
+  ee.Feature(null, {class: 'Water', area_km2: waterSumRF}),
+  ee.Feature(null, {class: 'crop', area_km2: vegetationSumRF}),
+  ee.Feature(null, {class: 'Built-up Urban', area_km2: builtupUrbanSumRF}),
+  ee.Feature(null, {class: 'Fallow', area_km2: fallowSumRF}),
+  ee.Feature(null, {class: 'Barren', area_km2: barrenSumRF}),
+  ee.Feature(null, {class: 'Forest', area_km2: forestSumRF}),
+  ee.Feature(null, {class: 'Built-up Rural', area_km2: builtupRuralSumRF}),
+  ee.Feature(null, {class: 'Coastal Land', area_km2: coastalLandSumRF})
+]);
+
+// 6. Print readable results for RF
+print('RF Land Cover Area (in km²):');
+areaFeaturesRF.evaluate(function(fc) {
+  fc.features.forEach(function(f) {
+    print(f.properties.class + ': ' + f.properties.area_km2.toFixed(2) + ' km²');
+  });
+});
+
+// ---- AREA CALCULATION FOR SVM CLASSIFICATION ----
+
+// 1. Create class masks for SVM classification (assuming 'classified' is already defined)
+var waterMaskSVM = classified.eq(1);
+var vegetationMaskSVM = classified.eq(2);
+var builtupUrbanMaskSVM = classified.eq(3);
+var fallowMaskSVM = classified.eq(4);
+var barrenMaskSVM = classified.eq(5);
+var forestMaskSVM = classified.eq(6);
+var builtupRuralMaskSVM = classified.eq(7);
+var coastalLandMaskSVM = classified.eq(8);
+
+// 2. Calculate area in km² for SVM
+var waterAreaSVM = pixelArea.updateMask(waterMaskSVM);
+var vegetationAreaSVM = pixelArea.updateMask(vegetationMaskSVM);
+var builtupUrbanAreaSVM = pixelArea.updateMask(builtupUrbanMaskSVM);
+var fallowAreaSVM = pixelArea.updateMask(fallowMaskSVM);
+var barrenAreaSVM = pixelArea.updateMask(barrenMaskSVM);
+var forestAreaSVM = pixelArea.updateMask(forestMaskSVM);
+var builtupRuralAreaSVM = pixelArea.updateMask(builtupRuralMaskSVM);
+var coastalLandAreaSVM = pixelArea.updateMask(coastalLandMaskSVM);
+
+// 3. Calculate area values for SVM
+var waterSumSVM = getArea(waterAreaSVM);
+var vegetationSumSVM = getArea(vegetationAreaSVM);
+var builtupUrbanSumSVM = getArea(builtupUrbanAreaSVM);
+var fallowSumSVM = getArea(fallowAreaSVM);
+var barrenSumSVM = getArea(barrenAreaSVM);
+var forestSumSVM = getArea(forestAreaSVM);
+var builtupRuralSumSVM = getArea(builtupRuralAreaSVM);
+var coastalLandSumSVM = getArea(coastalLandAreaSVM);
+
+// 4. Create a FeatureCollection to store SVM area values
+var areaFeaturesSVM = ee.FeatureCollection([
+  ee.Feature(null, {class: 'Water', area_km2: waterSumSVM}),
+  ee.Feature(null, {class: 'crop', area_km2: vegetationSumSVM}),
+  ee.Feature(null, {class: 'Built-up Urban', area_km2: builtupUrbanSumSVM}),
+  ee.Feature(null, {class: 'Fallow', area_km2: fallowSumSVM}),
+  ee.Feature(null, {class: 'Barren', area_km2: barrenSumSVM}),
+  ee.Feature(null, {class: 'Forest', area_km2: forestSumSVM}),
+  ee.Feature(null, {class: 'Built-up Rural', area_km2: builtupRuralSumSVM}),
+  ee.Feature(null, {class: 'Coastal Land', area_km2: coastalLandSumSVM})
+]);
+
+// 5. Print readable results for SVM
+print('SVM Land Cover Area (in km²):');
+areaFeaturesSVM.evaluate(function(fc) {
+  fc.features.forEach(function(f) {
+    print(f.properties.class + ': ' + f.properties.area_km2.toFixed(2) + ' km²');
+  });
+});
+
+// ---- CREATE CHARTS ----
+
+// Chart for SVM
+var chartSVM = ui.Chart.feature.byFeature({
+  features: areaFeaturesSVM,
+  xProperty: 'class',
+  yProperties: ['area_km2']
+}).setChartType('ColumnChart')
+  .setOptions({
+    title: 'SVM Land Cover Area',
+    hAxis: {title: 'Land Cover Class'},
+    vAxis: {title: 'Area (km²)'},
+    colors: ['#0000FF', '#FF0000', '#FFFF00', '#FFFF99','#996633','#008000','#FF9999','#99CCFF']
+  });
+
+print(chartSVM);
+
+// Chart for Random Forest
+var chartRF = ui.Chart.feature.byFeature({
+  features: areaFeaturesRF,
+  xProperty: 'class',
+  yProperties: ['area_km2']
+}).setChartType('ColumnChart')
+  .setOptions({
+    title: 'Random Forest Land Cover Area',
+    hAxis: {title: 'Land Cover Class'},
+    vAxis: {title: 'Area (km²)'},
+    colors: ['#0000FF', '#FF0000', '#FFFF00', '#FFFF99','#996633','#008000','#FF9999','#99CCFF']
+  });
+
+print(chartRF);
