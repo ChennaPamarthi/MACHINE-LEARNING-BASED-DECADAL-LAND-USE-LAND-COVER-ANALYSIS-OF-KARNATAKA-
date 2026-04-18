@@ -1,0 +1,2 @@
+# MACHINE-LEARNING-BASED-DECADAL-LAND-USE-LAND-COVER-ANALYSIS-OF-KARNATAKA-
+The use of machine learning algorithms to analyze land use and land cover (LULC) change has become more important for environmental monitoring and urban planning. This paper looks at how well ensemble machine learning models can map and quantify land transformation patterns across Karnataka State over four decades, from 1994 to 2024. 
