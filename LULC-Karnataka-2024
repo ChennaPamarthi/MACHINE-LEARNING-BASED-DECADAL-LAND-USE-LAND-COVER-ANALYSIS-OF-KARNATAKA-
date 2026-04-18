@@ -1,0 +1,113 @@
+Map.addLayer(table);
+var dataset = ee.ImageCollection("LANDSAT/LC08/C02/T1")
+  .filterBounds(table)
+  .filterMetadata('CLOUD_COVER_LAND', 'less_than', 1)
+  .filterDate('2023-01-01', '2023-1-31')
+  .median()
+  .clip(table);
+
+// Visualization parameters
+ 
+// Area of Interest (ROI)
+Map.centerObject(table, 8);
+Map.addLayer(dataset,imageVisParam,"LANDSAT8")
+
+// Merge training regions for classification
+var c = water.merge(vegetation).merge(construction).merge(others);
+
+// Sample regions from the dataset for classification
+var training = dataset.sampleRegions({
+  collection: c,
+  properties: ['class'],
+  scale: 30
+});
+
+// Train an SVM classifier
+var classifier = ee.Classifier.libsvm().train({
+  features: training,
+  classProperty: 'class', // This matches the 'class' property in your training data
+  inputProperties: ['B5', 'B4', 'B3', 'B2']
+});
+
+// Classify the dataset using the trained classifier
+var classified = dataset.select(['B5', 'B4', 'B3', 'B2']).classify(classifier);
+
+// Visualization parameters for classification
+var visParams = {min: 1, max: 4, palette: ['blue', 'green', 'yellow', 'red']};
+Map.addLayer(classified, visParams, 'Classified Image');
+// Split the dataset for training and testing (80/20 split)
+var withRandom = training.randomColumn('random');
+var split = 0.8;
+var trainingPartition = withRandom.filter(ee.Filter.lt('random', split));
+var testingPartition = withRandom.filter(ee.Filter.gte('random', split));
+
+// Train the SVM classifier again with the partitioned data
+var classifiersvm = ee.Classifier.libsvm().train({
+  features: trainingPartition, 
+  classProperty: 'class',  // Make sure to use the same property
+  inputProperties: ['B5', 'B4', 'B3', 'B2']
+});
+
+// Classify the dataset using the newly trained classifier
+var classifiedsvm = dataset.select(['B5', 'B4', 'B3', 'B2']).classify(classifiersvm);
+
+// Add classified SVM layer to the map
+Map.addLayer(classifiedsvm, visParams, 'SVM Classification');
+
+// Get a confusion matrix for resubstitution accuracy
+var trainAccuracy = classifiersvm.confusionMatrix();
+print('Confusion matrix: ', trainAccuracy);
+print('Training overall accuracy: ', trainAccuracy.accuracy());
+print('Kappa accuracy: ', trainAccuracy.kappa());
+print('Producers accuracy: ', trainAccuracy.producersAccuracy());
+print('Consumers accuracy: ', trainAccuracy.consumersAccuracy());
+
+// Correct mapping of class numbers to class names
+// Class values: 1 = Water, 2 = Vegetation, 3 = Construction, 4 = Others
+var waterMask = classified.eq(1);
+var vegetationMask = classified.eq(2);
+var constructionMask = classified.eq(3);
+var othersMask = classified.eq(4);
+
+// Calculate the area for each class
+var waterArea = waterMask.multiply(ee.Image.pixelArea()).divide(1e6); // Convert to square kilometers
+var vegetationArea = vegetationMask.multiply(ee.Image.pixelArea()).divide(1e6);
+var constructionArea = constructionMask.multiply(ee.Image.pixelArea()).divide(1e6);
+var othersArea = othersMask.multiply(ee.Image.pixelArea()).divide(1e6);
+
+// Sum the area for each class within the ROI
+var waterSum = waterArea.reduceRegion({
+  reducer: ee.Reducer.sum(),
+  geometry: table,
+  scale: 30,
+  maxPixels: 1e9
+}).get('classification');
+
+var vegetationSum = vegetationArea.reduceRegion({
+  reducer: ee.Reducer.sum(),
+  geometry: table,
+  scale: 30,
+  maxPixels: 1e9
+}).get('classification');
+
+var constructionSum = constructionArea.reduceRegion({
+  reducer: ee.Reducer.sum(),
+  geometry: table,
+  scale: 30,
+  maxPixels: 1e9
+}).get('classification');
+
+var othersSum = othersArea.reduceRegion({
+  reducer: ee.Reducer.sum(),
+  geometry: table,
+  scale: 30,
+  maxPixels: 1e9
+}).get('classification');
+
+// Create a dictionary with class names and their corresponding areas
+var areaDict = ee.Dictionary({
+  'Water': waterSum,
+  'Vegetation': vegetationSum,
+  'Construction': constructionSum,
+  'Others': othersSum
+});
